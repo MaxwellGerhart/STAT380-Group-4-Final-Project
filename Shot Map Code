@@ -1,0 +1,105 @@
+library(ggplot2)
+library(dplyr)
+
+# 1. Attach xG values to prem_shots
+prem_shots$xg <- predicted_xg
+
+# 2. Add team names from match_id lookup
+team_lookup <- prem1516_matches %>%
+  distinct(team.id = home_team.home_team_id, 
+           team.name = home_team.home_team_name)
+
+prem_shots <- prem_shots %>% 
+  left_join(team_lookup, by = "team.id")
+
+# 3. Filter each team separately
+liverpool_shots <- prem_shots %>%
+  filter(team.name == "Liverpool")
+
+leicester_shots <- prem_shots %>%
+  filter(team.name == "Leicester City")
+
+# 4. Colors
+liverpool_red <- "#D00027"
+leicester_blue <- "#003090"
+
+# ============================================================
+# LIVERPOOL SHOT MAP (RED)
+# ============================================================
+
+ggplot(liverpool_shots, aes(x = location_x, y = location_y)) +
+  
+  annotate("rect", xmin = 0, xmax = 120, ymin = 0, ymax = 80,
+           fill = "white", color = "black", linewidth = 0.4) +
+
+  annotate("rect", xmin = 102, xmax = 120, ymin = 18, ymax = 62,
+           fill = NA, color = "black", linewidth = 0.4) +
+
+  annotate("segment", x = 120, xend = 120, y = 36-3.66, yend = 36+3.66,
+           color = "black", linewidth = 1.2) +
+  
+  geom_point(aes(size = xg, alpha = xg),
+             color = liverpool_red,
+             fill = "white",
+             shape = 21, stroke = 0.8) +
+
+  scale_size(range = c(2, 8)) +
+  scale_alpha(range = c(0.4, 1)) +
+
+  coord_fixed() +
+  theme_minimal() +
+  theme(
+    panel.grid = element_blank(),
+    panel.background = element_rect(fill = "white", color = NA),
+    legend.position = "bottom",
+    plot.title = element_text(face = "bold", size = 18)
+  ) +
+  labs(
+    title = "Liverpool – Shot Map (2015–16)",
+    subtitle = "Sized & shaded by Expected Goals (xG)",
+    x = "Pitch Length",
+    y = "Pitch Width",
+    size = "xG",
+    alpha = "xG"
+  )
+
+
+# ============================================================
+# LEICESTER CITY SHOT MAP (BLUE)
+# ============================================================
+
+ggplot(leicester_shots, aes(x = location_x, y = location_y)) +
+  
+  annotate("rect", xmin = 0, xmax = 120, ymin = 0, ymax = 80,
+           fill = "white", color = "black", linewidth = 0.4) +
+
+  annotate("rect", xmin = 102, xmax = 120, ymin = 18, ymax = 62,
+           fill = NA, color = "black", linewidth = 0.4) +
+
+  annotate("segment", x = 120, xend = 120, y = 36-3.66, yend = 36+3.66,
+           color = "black", linewidth = 1.2) +
+  
+  geom_point(aes(size = xg, alpha = xg),
+             color = leicester_blue,
+             fill = "white",
+             shape = 21, stroke = 0.8) +
+
+  scale_size(range = c(2, 8)) +
+  scale_alpha(range = c(0.4, 1)) +
+
+  coord_fixed() +
+  theme_minimal() +
+  theme(
+    panel.grid = element_blank(),
+    panel.background = element_rect(fill = "white", color = NA),
+    legend.position = "bottom",
+    plot.title = element_text(face = "bold", size = 18)
+  ) +
+  labs(
+    title = "Leicester City – Shot Map (2015–16)",
+    subtitle = "Sized & shaded by Expected Goals (xG)",
+    x = "Pitch Length",
+    y = "Pitch Width",
+    size = "xG",
+    alpha = "xG"
+  )
