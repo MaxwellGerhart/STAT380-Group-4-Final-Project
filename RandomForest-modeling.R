@@ -67,7 +67,7 @@ rf_model <- randomForest(
   mtry = 3
 )
 
-#Create our predict on test data and extract the 
+#Create our predict on test data and extract the column representing probability of a goal
 probs <- predict(rf_model, test, type = "prob")
 rf_pred <- probs[,2]
 
