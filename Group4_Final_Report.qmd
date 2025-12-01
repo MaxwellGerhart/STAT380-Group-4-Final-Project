@@ -1,5 +1,6 @@
 ---
-title: "Group 4"
+title: "Predicting shot probabilities and analyizing match outcomes"
+subtitle: "STAT 380 Group 4"
 author: "Maxwell Gerhart, Rohan Sampath, Jaikhush Thakkar, and Ryan Kaye"
 format: pdf
 keep-md: true
@@ -19,6 +20,7 @@ library(randomForest)
 library(gt)
 library(ggplot2)
 library(webshot2)
+
 ```
 
 Our goal for the project was to create a model to calculate the probability of a shot resulting in a goal. In soccer this metric is commonly known as expected goals (xG for short). We plan on creating three models: a logistic regression model, Generalized Additive Model (GAM), and random forest model. Once we select the best model, we will put this model to use by calculating the expected points of an entire league season. Calculating expected points requires running simulations based on the shot xG values in order to calculate the proportion of wins, losses, and draws for each team. 
@@ -109,17 +111,29 @@ shots <- shots %>%
     distance = sqrt((goal_x - x)^2 + (goal_y - y)^2),
     angle = abs(atan((y - goal_y) / (goal_x - x)))
   )
+
 ```
+
+```{r}
+#| warning: false
+#| message: false
+#| echo: false
+
+cols <- ifelse(shots$is_goal == 1, "green", "red")
+
+pairs(
+  shots[, c("distance", "angle")],
+  col = cols,
+  pch = 19
+)
+
+```
+
+The dataset contains 9908 shots where 988 resulted in goals meaning that approximately 10% of shots resulted in a goal. This means accuracy won't be the best for mode. The pairwise plot shows the two biggest predictors distance and angle from the plots we can see that closer and lower angle shots result in the most goals.
 
 **Logistic**
 
 For the initial approach we began with a Logistic Regression model which is an extremely commonly used model for prediction tasks. We wanted to create a baseline model that would help us predict the expected goals scored in a total match by focusing on calculating the probability of a shot resulting in a goal. This is a great match because Logistic Regression works with binary factors, and in our case each shot would be either a Goal or Not a goal depending on the outcome of the shot.
-
-In this case the way that we estimate with the model is:
-
-$$
-\begin{aligned}\text{logit}\big(P(\text{goal}=1)\big)&= \beta_0 + \beta_1\,\text{distance}+ \beta_2\,\text{angle} \\[6pt]&\quad + \beta_{3}\,\text{LeftFoot}+ \beta_{4}\,\text{OtherBodyPart}+ \beta_{5}\,\text{RightFoot} \\[4pt]&\quad + \beta_{6}\,\text{DivingHeader}+ \beta_{7}\,\text{HalfVolley}+ \beta_{8}\,\text{Lob}+ \beta_{9}\,\text{NormalTechnique} \\&\quad + \beta_{10}\,\text{OverheadKick}+ \beta_{11}\,\text{Volley} \\[6pt]&\quad + \beta_{12}\,\text{FromCounter}+ \beta_{13}\,\text{FromFreeKick}+ \beta_{14}\,\text{FromGoalKick} \\&\quad + \beta_{15}\,\text{FromKeeper}+ \beta_{16}\,\text{FromKickOff}+ \beta_{17}\,\text{FromThrowIn} \\&\quad + \beta_{18}\,\text{OtherPlayPattern}+ \beta_{19}\,\text{RegularPlay}.\end{aligned}
-$$
 
 This is the model we have seen many times in class, and follows the basic commonly used pattern for logistic regression tasks. The incorporation of these variables works to help us to estimate and understand how each characteristic affects the probability of a shot resulting in a goal. For example the numerical variables such as the location variables work to tell us the coordinates of where on the field the shot is being taken from. Naturally, a shot attempt right in front of the goal is far more likely to result in a goal compared to a shot taken from the midfield line. Similarly the angle in which the shot was taken has a major influence on the prediction we decide on. When looking at the categorical predictors such as body parts or under pressure they can provide additional context for the model. We fit and train the model model by using the historical data from the Bundesliga, Serie A, Ligue 1, and La Liga.
 
@@ -145,22 +159,42 @@ log_model <- glm(
   family = binomial(link = "logit")
 )
 
+library(mgcv)
+
+gam_model <- gam(
+  is_goal ~ 
+    s(distance) +
+    s(angle) +
+    under_pressure +
+    shot_body_part +
+    shot_technique +
+    play_pattern,
+  data = train,
+  family = binomial
+)
+
+library(randomForest)
+
+# Random Forest requires a factor target
+train$is_goal_factor <- factor(train$is_goal, levels = c(0, 1))
+
+# Fiting the Random Forest model
+set.seed(123)
+rf_model <- randomForest(
+  is_goal_factor ~ distance + angle + under_pressure +
+    shot_body_part + shot_technique + play_pattern,
+  data = train,
+  ntree = 500,
+  mtry = 3
+)
+
 ```
 
-```{r}
-#| warning: false
-#| message: false
-#| echo: false
+The Logistic Regression model had an **AUC of 0.7964**, which is a strong score from the supervised learning method. The result is to be expected, as with using a linear model, we can capture broader relationships, but struggle to fully capture the more complex directional relationships.
 
-library(pROC)
+Naturally, when looking at our results, the spatial predictors were not the most influential factors. In fact, the highest few predictors in terms of importance were shot techniques, such as diving header or lob. Although distance is not clearly associated, this correlation makes sense because a header would almost exclusively be tried when very close to the goal. Similarly, the purpose of a lob is a slow shot that’s meant to go above the goalkeeper. A shot of this kind would only be effective if very close to the goal, so we know that a lob shot is very informative when trying to calculate xG.
 
-#Prediction + AUC
-test$log_xg <- predict(log_model, newdata = test, type = "response")
-
-auc_value <- roc(test$is_goal, test$log_xg)$auc
-auc_value
-
-```
+Overall, the Logistic Regression model does a very good job of predicting and is useful for comparative tasks. However, the linear structure limits the ability to truly capture spatial complexity in the decision making process, limiting top end results.
 
 **GAM**
 
@@ -182,42 +216,7 @@ We chose GAM because:
 
 We trained the GAM on shots from four major European leagues in the 2015/16 season and evaluated it on a held-out test dataset using AUC as the primary performance metric.
 
-```{r}
-#| include: false
-library(mgcv)
-
-gam_model <- gam(
-  is_goal ~ 
-    s(distance) +
-    s(angle) +
-    under_pressure +
-    shot_body_part +
-    shot_technique +
-    play_pattern,
-  data = train,
-  family = binomial
-)
-
-```
-
-```{r}
-#| warning: false
-#| message: false
-#| echo: false
-
-#Prediction + AUC
-test$gam_xg <- predict(gam_model, newdata = test, type = "response")
-
-auc_value <- roc(test$is_goal, test$gam_xg)$auc
-auc_value
-
-#GAM Plots
-par(mfrow = c(1, 2))
-plot(gam_model, select = 1, main = "Effect of Distance")
-plot(gam_model, select = 2, main = "Effect of Angle")
-```
-
-The GAM model produced an **AUC of 0.8164** on the test set, which shows strong predictive performance. An AUC above 0.80 suggests that the model successfully distinguishes between shots that become goals and those that do not. This aligns with expectations for simple xG models and confirms that our features, especially distance carry important information about shot quality.
+The GAM model produced an **AUC of 0.7993** on the test set, which shows strong predictive performance. An AUC above 0.80 suggests that the model successfully distinguishes between shots that become goals and those that do not. This aligns with expectations for simple xG models and confirms that our features, especially distance carry important information about shot quality.
 
 The smooth terms in the GAM reveal clear relationships:
 
@@ -235,53 +234,15 @@ For the last model here we wanted to employ a Random Forest classifier to help w
 
 We still employ the same predictors as aforementioned, maintaining consistency and reproducibility in our approach. For random forest we also made sure to convert to factors to appropriately run the model. That way we have a predictor for not a goal and goal scored, helping to effectively create our xG. We used 500 trees in our model, and kept the mtry value to 3.
 
-```{r}
-#| include: false
-library(randomForest)
-
-# Random Forest requires a factor target
-train$is_goal_factor <- factor(train$is_goal, levels = c(0, 1))
-
-# Fiting the Random Forest model
-set.seed(123)
-rf_model <- randomForest(
-  is_goal_factor ~ distance + angle + under_pressure +
-    shot_body_part + shot_technique + play_pattern,
-  data = train,
-  ntree = 500,
-  mtry = 3
-)
-```
-
-```{r}
-#| warning: false
-#| message: false
-#| echo: false
-
-
-library(pROC)
-
-#Prediction + AUC
-probs <- predict(rf_model, test, type = "prob")
-rf_pred <- probs[,2]
-
-
-# Compute AUC to analyze 
-rf_auc <- auc(roc(test$is_goal, rf_pred))
-rf_auc
-
-# Plot variable importance
-varImpPlot(rf_model)
-
-```
-
-The Random Forest Model produced an **AUC of 0.7762**. This is a relatively strong predictor, showing the model does well when trying to predict whether or not a goal is scored. Although it is not on the level we achieved with GAM, we can still see that the model can meaningfully differentiate between a good and a poor shot. 
+The Random Forest Model produced an **AUC of 0.7528**. This is a relatively strong predictor, showing the model does well when trying to predict whether or not a goal is scored. Although it is not on the level we achieved with GAM, we can still see that the model can meaningfully differentiate between a good and a poor shot. 
 
 Furthermore, when taking a deeper dive into our visualization, which we created above, we can analyze the importance of each predictor. As you would naturally assume, the most important factor was the distance, which is how far away the shot is taken from the location of the goal. Then, not too far behind, was the angle at which the shot was taken towards the goal. This makes sense because a shot taken heavily from one side would allow the goalkeeper to position themselves in a manner where they are essentially covering all the area the ball could travel to based on the angle.
 
 Overall, the use of the Random Forest was successful and allowed us to compute xG values in an accurate and meaningful way. We were able to compute values for each shot that align with historical data, and have a quality accuracy measurement in AUC. Although it was not the best performance, it is reliable and a good tool to have when comparing between models.
 
 **Model Selection**
+
+Overall, we had three separate models that all worked well. However, one model stood out among the rest. For our Model Selection, we chose the GAM model due to its improved performance and superior interpretability. The strongest metric we used across all three models was AUC. Our Logistic Regression performed well with an AUC of 0.7964. Similarly, the Random Forest model outputted an AUC of 0.7528. However, our GAM model stood far above the rest, with an AUC score of 0.7993. Another key reason we chose the GAM model was its ability to capture nonlinear and spatial patterns that the other models did not capture as well. Soccer, and more specifically shooting, does not follow a linear relationship with xG distance, so the appropriate model should account for this. Furthermore, the partial effects plots provide a great explanation of the model's behavior, making the GAM both interpretable and accurate. For those reasons, we found the GAM model to be the best choice for testing.
 
 **League Table**
 
@@ -295,6 +256,8 @@ Aggregating across all matches yields a full model-based Premier League table, w
 #| warning: false
 #| message: false
 #| include: false
+#| cache: true
+#| cache.lazy: false
 
 library(ggplot2)
 library(dplyr)
@@ -577,39 +540,56 @@ gtsave(gt_tbl, "prem_table.png")
 knitr::include_graphics("prem_table.png")
 ```
 
-### Key Insights
+**Key Insights**
 
--   Teams that overperformed their xPTS gained more points than our model predicted based on shot quality alone. These differences may be attributed to finishing skill, goalkeeper performance, tactical game states, or random variation.
+Teams that overperformed their xPTS achieved more points than our GAM-based model predicted from the underlying shot quality. Elite finishing, excellent goalkeeping, tactical match states, or short-term volatility could all contribute to this disparity.
 
--   Teams that underperformed their xPTS likely created enough high-quality chances but finished poorly or conceded goals at an unsustainably high rate.
+According to our model, teams that performed poorly in comparison to xPTS probably produced enough quality chances but either failed to convert them or gave up goals more frequently than anticipated.
 
-For example, teams like Leicester City (who won the league in 2015–16) typically show notable overperformance relative to xPTS due to a combination of elite finishing, efficient defending, and strong tactical coherence. Conversely, teams that performed below expectation may have been unlucky or lacked clinical finishing.
+Leicester City, the 2015–16 champions, exhibited a pronounced overperformance in comparison to their projected expectations, which is indicative of their clinical finishing and effective defensive structure despite their mediocre quality of players,which is what makes their title win one of the greatest sporting achievements ever.
 
-Our final table includes each team’s actual points (PTS), expected points (xPTS), expected goals for (xG), and expected goals against (xGA). This allows us to diagnose where teams deviated from expectation whether through attack, defense, or both.
+Teams below their xPTS, on the other hand, might have had trouble converting opportunities, keeping their defensive shape, or just had negative variance.
 
-### Interpretation
+We may determine whether there were deviations in offense, defense, or both by looking at our summary table, which shows each team's actual points, expected points (xPTS), expected goals for (xG), and expected goals against (xGA).
 
--   xG and xGA summarize underlying performance, focusing on process rather than outcomes.
+**Interpretation**
 
--   xPTS contextualizes these performances in terms of league standings, showing what the table would look like if results depended only on the quality of chances.
+Our GAM's xG and xGA measures the quality of opportunities generated and lost by simulating the nonlinear impacts of shot distance, angle, and geographical position.By simulating matches based only on modeled chance quality rather than finishing results, xPTS converts these anticipated goals into hypothetical league outcomes.
 
-This approach is widely used in modern soccer analytics and helps identify teams whose results are driven by variance rather than sustainable underlying play. Our results generally align with trendlines observed in professional models such as Understat’s xPTS tables, demonstrating that our modeling and simulation framework captures meaningful elements of team performance.
+GAMs are commonly utilized in contemporary soccer analytics because they can adapt to nonlinear patterns,such as sharply increasing risk in center zones or diminishing benefits from long-range shots. Our findings are in good agreement with well-established patterns from models like Understat's xG/xPTS estimates.This suggests that our GAM provides a solid basis for analyzing team performance throughout the season and captures significant structure in shot quality.
 
 **Shot Map**
 
-To complement our modeling results, we created detailed shot maps for two Premier League clubs from the 2015–16 season: Liverpool and Leicester City. Each plot visualizes every shot taken by the team across the entire league campaign and is sized and shaded according to the predicted xG from our model. These visualizations help us understand how teams generated their chances, where those chances occurred on the pitch, and whether our model assigns reasonable probabilities to different shooting situations.
+We created comprehensive shot maps for Leicester City and Liverpool for the 2015–16 campaign to go along with our findings. Every league shot that is tried is displayed in each plot, and the GAM-predicted xG for each shot is reflected by the size and color of the circles.
 
-We used a standardized pitch template and colored the points by team identity (red for Liverpool, blue for Leicester City). Larger circles represent higher-quality chances, while lighter/smaller circles correspond to low-probability shots. Because the shot maps reflect the predictions from our logistic regression xG model, they also serve as a qualitative diagnostic tool for model behavior.
+Compared to conventional linear or logistic models, the generated xG values account for positional context more flexibly since GAMs may simulate smooth, nonlinear spatial interactions. Thus, the shot maps aid in confirming if the GAM appropriately rates the threat of various shooting scenarios.
 
-Liverpool showed a high volume of shots clustered inside the box, especially near the central channels. Their chance profile reflects a team generating sustained pressure and short-range shooting opportunities, which aligns well with their historical playing style during the 2015–16 season. The model appropriately assigns higher xG values to these closer-range shots, which appear as larger red circles.
+We employ a continuous xG color gradient (green to yellow to orange to red) and a uniform half-pitch template. The GAM predicts higher-quality chances when the circles are larger and warmer in color.We can examine the spatial distribution of opportunities, the locations where teams created their best chances, and the accuracy with which the GAM distinguishes between high-probability and low-probability shoots using these shot maps.
 
-Leicester City, meanwhile, display a more compact but efficient shot map. Many of their high-xG chances occur slightly deeper but still in central, high-value areas. This aligns with their counterattacking style during their title-winning season, often creating clear chances with fewer overall shots. Their shot map shows fewer circles overall, but a larger proportion of them are medium-to-high xG opportunities.
+Liverpool attempted 635 shots, one of the highest volumes in the league, with a dense cluster inside and around the penalty area. Their GAM-based xG total (60.08) closely matches their actual output of 62 goals, indicating they finished chances at roughly the expected rate.
+
+The GAM assigns high xG to close-range and central shots, which appear as larger red and yellow circles on the plot. Liverpool’s map shows sustained pressure, frequent box entries, and continuous shot generation,all consistent with their German philosophy and attacking identity during the 2015–16 season, which stems from their iconic mid-season appointment of now club legend, manager Jurgen Klopp.
+
+Leicester City attempted 525 shots, fewer than Liverpool, but produced a significantly higher GAM-based xG (70.66) and scored 67 goals.
+
+Their high-value chances are slightly deeper but very central, a hallmark of their elite counterattacking during the title season. The GAM identifies these breakaway or semi-transition shots as high danger because their combination of angle, proximity, and open play conditions strongly increases scoring probability.
+
+Their shot map contains fewer circles but a higher concentration of medium-to-high xG chances, demonstrating their efficiency and tactical discipline. This shows the elite planning,strategy and execution of the roster and management and is and will always be a prime example of maximum utilization of limited resources.
+
+Two crucial aspects are supported by these numerical and visual patterns:
+
+Close-range or high-angle shots are assigned significantly larger xG by the GAM, which accurately reflects nonlinear spatial effects. This behavior is consistent with contemporary professional models.
+
+The maps inherently reveal team tactics; Liverpool,with their intense volume and ongoing pressure and selective yet excellent central opportunities for Leicester
+
+Overall, the shot maps show significant variations in chance creation between these two clubs during the 2015–16 Premier League season and confirm that the GAM acts in accordance with soccer domain knowledge.
 
 ```{r}
 #| warning: false
 #| message: false
 #| echo: false
 #| fig.align: center
+
 
 # Filter each team
 liverpool_shots <- prem_shots %>%
@@ -672,7 +652,7 @@ p_liv <- ggplot(liverpool_shots, aes(x = y, y = x)) +
     axis.text = element_blank(),
     axis.title = element_blank(),
     legend.position = "bottom",
-    plot.title = element_text(face = "bold", size = 24),
+    plot.title = element_text(face = "bold", size = 16),
     plot.subtitle = element_text(size = 14)
   ) +
   
@@ -684,7 +664,7 @@ p_liv <- ggplot(liverpool_shots, aes(x = y, y = x)) +
     caption = "Circle size = xG value | Black outline = Goal"
   )
 
-ggsave("liverpool_shotmap.png", p_liv, width = 7, height = 9, dpi = 300)
+ggsave("liverpool_shotmap.png", p_liv, width = 4, height = 6, dpi = 300)
 
 # Leicester City
 
@@ -736,7 +716,7 @@ p_lei <- ggplot(leicester_shots, aes(x = y, y = x)) +
     axis.text = element_blank(),
     axis.title = element_blank(),
     legend.position = "bottom",
-    plot.title = element_text(face = "bold", size = 24),
+    plot.title = element_text(face = "bold", size = 16),
     plot.subtitle = element_text(size = 14)
   ) +
   
@@ -748,19 +728,611 @@ p_lei <- ggplot(leicester_shots, aes(x = y, y = x)) +
     caption = "Circle size = xG value | Black outline = Goal"
   )
 
-ggsave("leicester_shotmap.png", p_lei, width = 7, height = 9, dpi = 300)
+ggsave("leicester_shotmap.png", p_lei, width = 4, height = 6, dpi = 300)
 
 knitr::include_graphics("liverpool_shotmap.png")
 knitr::include_graphics("leicester_shotmap.png")
 
 ```
 
-These visual patterns validate two important insights:
+**Conclusion**
 
-1.  The xG model produces reasonable spatial patterns, giving higher probabilities to close-range, high-angle shots.
+From this project, several key takeaways emerge. First, xG and xPTS offer insightful information about underlying performance , showing where teams performed better or worse than expected and emphasizing tactical variations in the creation of opportunities. Second, shot maps provide an easy-to-understand visual confirmation of these trends by illustrating the manifestation of team identity on the field. When combined, these metrics significantly outperform simple goal totals or match results in capturing the quantity and caliber of opportunities.
 
-2.  The two teams’ tactical styles emerge naturally from the visualizations heavy-volume creation for Liverpool vs. selective, high-quality chances for Leicester.
+The sport is moving toward more accurate, personalized, and data-driven evaluations as clubs continue to use advanced analytics. However, this shift also has downsides. Relying too heavily on predictive models can reduce creativity, make tactics too rigid, and push teams to copy the same “optimal” strategies. This can make soccer more efficient, but sometimes less expressive and less enjoyable to watch.
 
-Overall, the shot maps serve as a visual confirmation that our model behaves consistently with real soccer strategy, and they illustrate meaningful differences in chance creation between teams.
+Future work could explore these concerns by studying how analytics changes playing styles over time, whether teams become more similar tactically, and how data use affects creativity, risk-taking, and overall entertainment value. Understanding this balance will be important as soccer continues to evolve with more data and technology.
+
+**Author Contribution**
 
 **Code Appendix**
+
+```{r}
+#| eval: false
+
+library(StatsBombR)
+library(tidyverse)
+library(mgcv)
+library(pROC)
+
+comps <- FreeCompetitions()
+
+prem1516 <- comps %>%
+  filter(competition_id == "2", season_id == "27")
+
+laliga1516 <- comps %>%
+  filter(competition_id == "11", season_id == "27")
+
+bundes1516 <- comps %>%
+  filter(competition_id == "9", season_id == "27")
+
+ligue1516 <- comps %>%
+  filter(competition_id == "7", season_id == "27")
+
+seriea1516 <- comps %>%
+  filter(competition_id == "12", season_id == "27")
+
+
+# Fetch matches for each competition
+prem1516_matches <- FreeMatches(prem1516)
+laliga1516_matches <- FreeMatches(laliga1516)
+bundes1516_matches <- FreeMatches(bundes1516)
+ligue1516_matches <- FreeMatches(ligue1516)
+seriea1516_matches <- FreeMatches(seriea1516)
+
+# Combine all matches into one data frame, except premier league
+matches_1516 <- bind_rows(
+  laliga1516_matches,
+  bundes1516_matches,
+  ligue1516_matches,
+  seriea1516_matches,
+)
+
+# Get all events from matches data frame
+events <- free_allevents(MatchesDF = matches_1516, Parallel = TRUE)
+
+# Filter Shots
+shots <- events %>%
+  filter(type.name == "Shot") %>%
+  mutate(
+    x = map_dbl(location, 1),
+    y = map_dbl(location, 2)
+  ) %>%
+  select(
+    is_goal = shot.outcome.name,
+    x,
+    y,
+    under_pressure,
+    shot_body_part = shot.body_part.name,
+    shot_technique = shot.technique.name,
+    play_pattern = play_pattern.name
+  ) %>%
+  mutate(
+    is_goal = ifelse(is_goal == "Goal", 1, 0),
+    under_pressure = ifelse(is.na(under_pressure), 0, 1)
+  )
+
+# Creating Distance + Angle
+goal_x <- 120
+goal_y <- 40
+
+shots <- shots %>%
+  mutate(
+    distance = sqrt((goal_x - x)^2 + (goal_y - y)^2),
+    angle = abs(atan((y - goal_y) / (goal_x - x)))
+  )
+
+```
+
+```{r}
+#| eval: false
+
+# Train/Test Split
+set.seed(123)
+idx <- sample(1:nrow(shots), 0.8 * nrow(shots))
+
+train <- shots[idx, ]
+test  <- shots[-idx, ]
+
+log_model <- glm(
+  is_goal ~ 
+    distance +
+    angle +
+    under_pressure +
+    shot_body_part +
+    shot_technique +
+    play_pattern,
+  data = train,
+  family = binomial(link = "logit")
+)
+
+library(mgcv)
+
+gam_model <- gam(
+  is_goal ~ 
+    s(distance) +
+    s(angle) +
+    under_pressure +
+    shot_body_part +
+    shot_technique +
+    play_pattern,
+  data = train,
+  family = binomial
+)
+
+library(randomForest)
+
+# Random Forest requires a factor target
+train$is_goal_factor <- factor(train$is_goal, levels = c(0, 1))
+
+# Fiting the Random Forest model
+set.seed(123)
+rf_model <- randomForest(
+  is_goal_factor ~ distance + angle + under_pressure +
+    shot_body_part + shot_technique + play_pattern,
+  data = train,
+  ntree = 500,
+  mtry = 3
+)
+
+
+```
+
+```{r}
+
+library(pROC)
+
+#Prediction + AUC
+test$log_xg <- predict(log_model, newdata = test, type = "response")
+
+auc_value <- roc(test$is_goal, test$log_xg)$auc
+auc_value
+
+#Prediction + AUC
+test$gam_xg <- predict(gam_model, newdata = test, type = "response")
+
+auc_value <- roc(test$is_goal, test$gam_xg)$auc
+auc_value
+
+#GAM Plots
+par(mfrow = c(1, 2))
+plot(gam_model, select = 1, main = "Effect of Distance")
+plot(gam_model, select = 2, main = "Effect of Angle")
+
+#Prediction + AUC
+probs <- predict(rf_model, test, type = "prob")
+rf_pred <- probs[,2]
+
+
+# Compute AUC to analyze 
+rf_auc <- auc(roc(test$is_goal, rf_pred))
+rf_auc
+
+# Plot variable importance
+varImpPlot(rf_model)
+
+```
+
+```{r}
+#| eval: false
+
+library(ggplot2)
+library(dplyr)
+library(gt)
+library(StatsBombR)
+
+## 1. Get Premier League 2015–16 events ----
+comps <- FreeCompetitions()
+prem1516_matches <- FreeMatches(prem1516)
+prem_events <- free_allevents(
+  MatchesDF = prem1516_matches,
+  Parallel  = TRUE
+) %>%
+  allclean()
+
+# Filter Shots
+prem_shots <- prem_events %>%
+  filter(type.name == "Shot") %>%
+  mutate(
+    x = map_dbl(location, 1),
+    y = map_dbl(location, 2)
+  ) %>%
+  select(
+    match_id,
+    team.name = team.name,
+    is_goal = shot.outcome.name,
+    x,
+    y,
+    under_pressure,
+    shot_body_part = shot.body_part.name,
+    shot_technique = shot.technique.name,
+    play_pattern = play_pattern.name
+  ) %>%
+  mutate(
+    is_goal = ifelse(is_goal == "Goal", 1, 0),
+    under_pressure = ifelse(is.na(under_pressure), 0, 1)
+  )
+
+# Creating Distance + Angle
+goal_x <- 120
+goal_y <- 40
+
+prem_shots <- prem_shots %>%
+  mutate(
+    distance = sqrt((goal_x - x)^2 + (goal_y - y)^2),
+    angle = abs(atan((y - goal_y) / (goal_x - x)))
+  )
+
+prem_shots <- prem_shots %>% 
+  mutate(
+    xg = predict(gam_model, newdata = ., type = "response")
+  ) %>%
+  filter(!is.na(xg)) %>%
+  select(match_id, team.name, x, y, xg, is_goal)
+
+## 3. Simulation function for one match ----
+simulate_match_from_xg <- function(match_shots, n_sims = 10000) {
+  # expects: match_shots has columns team.name, xg
+  
+  xg   <- match_shots$xg
+  team <- match_shots$team.name
+  teams <- unique(team)
+  
+  # edge cases: no shots or not exactly two teams
+  if (length(xg) == 0L || length(teams) != 2L) {
+    return(tibble(
+      team.name   = teams,
+      win_prob    = 0,
+      draw_prob   = 1,
+      loss_prob   = 0,
+      exp_points  = 1
+    ))
+  }
+  
+  idx1 <- which(team == teams[1])
+  idx2 <- which(team == teams[2])
+  
+  n_shots <- length(xg)
+  
+  # prob matrix (n_sims x n_shots)
+  prob_mat <- matrix(rep(xg, each = n_sims),
+                     nrow = n_sims, ncol = n_shots, byrow = FALSE)
+  
+  # simulate goals per shot (Bernoulli)
+  goal_mat <- matrix(
+    rbinom(n_sims * n_shots, size = 1, prob = as.vector(prob_mat)),
+    nrow = n_sims, ncol = n_shots
+  )
+  
+  # goals per team per simulation
+  goals_team1 <- rowSums(goal_mat[, idx1, drop = FALSE])
+  goals_team2 <- rowSums(goal_mat[, idx2, drop = FALSE])
+  
+  team1_wins <- goals_team1 > goals_team2
+  team2_wins <- goals_team2 > goals_team1
+  draws      <- goals_team1 == goals_team2
+  
+  team1_win_prob <- mean(team1_wins)
+  team2_win_prob <- mean(team2_wins)
+  draw_prob      <- mean(draws)
+  
+  team1_exp_pts <- 3 * team1_win_prob + 1 * draw_prob
+  team2_exp_pts <- 3 * team2_win_prob + 1 * draw_prob
+  
+  tibble(
+    team.name  = teams,
+    win_prob   = c(team1_win_prob, team2_win_prob),
+    draw_prob  = draw_prob,
+    loss_prob  = c(mean(!team1_wins & !draws),
+                   mean(!team2_wins & !draws)),
+    exp_points = c(team1_exp_pts, team2_exp_pts)
+  )
+}
+
+## 4. Expected points per match and per season ----
+# per match (two rows per match: one per team)
+set.seed(380)
+
+match_expected_points <- prem_shots %>%
+  group_by(match_id) %>%
+  nest(data = -match_id) %>%
+  mutate(
+    sim_results = map(data, ~ simulate_match_from_xg(.x, n_sims = 10000))
+  ) %>%
+  select(match_id, sim_results) %>%
+  unnest(sim_results)
+
+# season totals for expected points
+season_expected_points <- match_expected_points %>%
+  group_by(team.name) %>%
+  summarise(
+    exp_points_season = sum(exp_points),
+    .groups = "drop"
+  )
+
+## 5. Calculate xG and xGA ----
+xg_summary <- prem_shots %>%
+  group_by(team.name) %>%
+  summarise(
+    xG = sum(xg),
+    .groups = "drop"
+  )
+
+# xGA (xG conceded) - need to get opponent's xG for each match
+xga_summary <- prem_shots %>%
+  left_join(
+    prem1516_matches %>% 
+      select(match_id, home_team.home_team_name, away_team.away_team_name),
+    by = "match_id"
+  ) %>%
+  mutate(
+    opponent = if_else(team.name == home_team.home_team_name, 
+                       away_team.away_team_name, 
+                       home_team.home_team_name)
+  ) %>%
+  group_by(opponent) %>%
+  summarise(
+    xGA = sum(xg),
+    .groups = "drop"
+  ) %>%
+  rename(team.name = opponent)
+
+## 6. Get actual results ----
+actual_results <- prem1516_matches %>%
+  # Home team results
+  transmute(
+    team.name = home_team.home_team_name,
+    W = if_else(home_score > away_score, 1, 0),
+    D = if_else(home_score == away_score, 1, 0),
+    L = if_else(home_score < away_score, 1, 0),
+    GF = home_score,
+    GA = away_score,
+    points = case_when(
+      home_score > away_score ~ 3,
+      home_score == away_score ~ 1,
+      TRUE ~ 0
+    )
+  ) %>%
+  bind_rows(
+    # Away team results
+    prem1516_matches %>%
+      transmute(
+        team.name = away_team.away_team_name,
+        W = if_else(away_score > home_score, 1, 0),
+        D = if_else(away_score == home_score, 1, 0),
+        L = if_else(away_score < home_score, 1, 0),
+        GF = away_score,
+        GA = home_score,
+        points = case_when(
+          away_score > home_score ~ 3,
+          away_score == home_score ~ 1,
+          TRUE ~ 0
+        )
+      )
+  ) %>%
+  group_by(team.name) %>%
+  summarise(
+    W = sum(W),
+    D = sum(D),
+    L = sum(L),
+    GF = sum(GF),
+    GA = sum(GA),
+    PTS = sum(points),
+    .groups = "drop"
+  )
+
+## 7. Combine everything into final table ----
+final_table <- actual_results %>%
+  left_join(xg_summary, by = "team.name") %>%
+  left_join(xga_summary, by = "team.name") %>%
+  left_join(season_expected_points, by = "team.name") %>%
+  rename(xPTS = exp_points_season) %>%
+  arrange(desc(PTS)) %>%
+  select(team.name, W, D, L, GF, GA, PTS, xG, xGA, xPTS)
+
+## 8. Create beautiful table ----
+gt_tbl <- final_table %>%
+  mutate(
+    Rank = row_number(),
+    .before = team.name
+  ) %>%
+  gt() %>%
+  tab_header(
+    title = "Premier League 2015-16 Season",
+    subtitle = "Actual vs Expected Performance"
+  ) %>%
+  cols_label(
+    Rank = "",
+    team.name = "Team",
+    W = "W",
+    D = "D",
+    L = "L",
+    GF = "GF",
+    GA = "GA",
+    PTS = "PTS",
+    xG = "xG",
+    xGA = "xGA",
+    xPTS = "xPTS"
+  ) %>%
+  fmt_number(
+    columns = c(xG, xGA, xPTS),
+    decimals = 1
+  ) %>%
+  # Alternating rows for entire table
+  tab_style(
+    style = cell_fill(color = "#f5f5f5"),
+    locations = cells_body(
+      rows = Rank %% 2 == 0
+    )
+  ) %>%
+  tab_style(
+    style = cell_text(weight = "bold"),
+    locations = cells_column_labels()
+  ) %>%
+  tab_options(
+    table.font.size = 14,
+    heading.title.font.size = 20,
+    heading.subtitle.font.size = 14,
+    column_labels.font.weight = "bold"
+  ) %>%
+  cols_align(
+    align = "center",
+    columns = c(W, D, L, GF, GA, PTS, xG, xGA, xPTS)
+  ) %>%
+  cols_align(
+    align = "left",
+    columns = team.name
+  )
+
+#gtsave(gt_tbl, "prem_table.png", engine = "ragg")
+
+#knitr::include_graphics("prem_table.png")
+```
+
+```{r}
+#| eval: false
+
+# Filter each team
+liverpool_shots <- prem_shots %>%
+  filter(team.name == "Liverpool")
+
+leicester_shots <- prem_shots %>%
+  filter(team.name == "Leicester City")
+
+# Create xG color palette 
+xg_colors <- c("#90EE90", "#FFFF00", "#FFA500", "#FF6347", "#FF0000", "#8B0000")
+
+# Liverpool
+p_liv <- ggplot(liverpool_shots, aes(x = y, y = x)) +  
+  
+  annotate("rect", xmin = 0, xmax = 80, ymin = 0, ymax = 120,
+           fill = "#F5F5F5", color = "#CCCCCC", linewidth = 0.8) +
+  
+  annotate("rect", xmin = 18, xmax = 62, ymin = 102, ymax = 120,
+           fill = NA, color = "#CCCCCC", linewidth = 0.8) +
+  
+  annotate("rect", xmin = 30, xmax = 50, ymin = 114, ymax = 120,
+           fill = NA, color = "#CCCCCC", linewidth = 0.8) +
+  
+  annotate("segment", x = 36, xend = 44, y = 120, yend = 120,
+           color = "#333333", linewidth = 2) +
+  
+  annotate("path",
+           x = 40 + 10 * sin(seq(0.64, 2.5, length.out = 50)),
+           y = 108 + 10 * cos(seq(0.64, 2.5, length.out = 50)),
+           color = "#CCCCCC", linewidth = 0.8) +
+  
+  # MISSED SHOTS
+  geom_point(data = filter(liverpool_shots, is_goal == 0),
+             aes(size = xg, fill = xg),
+             color = "#666666",
+             shape = 21,
+             stroke = 1,
+             alpha = 0.85) +
+  
+  # GOALS
+  geom_point(data = filter(liverpool_shots, is_goal == 1),
+             aes(size = xg, fill = xg),
+             color = "#000000",
+             shape = 21,
+             stroke = 1,
+             alpha = 1) +
+  
+  scale_size_continuous(range = c(1, 5), guide = "none") +
+  scale_fill_gradientn(colors = xg_colors,
+                       limits = c(0, 1),
+                       breaks = c(0.1, 0.2, 0.4, 0.6, 0.8),
+                       labels = c("low", "", "", "", "high"),
+                       name = "Goal probability") +
+  
+  coord_fixed(xlim = c(0, 80), ylim = c(60, 121)) + 
+  
+  theme_minimal() +
+  theme(
+    panel.grid = element_blank(),
+    axis.text = element_blank(),
+    axis.title = element_blank(),
+    legend.position = "bottom",
+    plot.title = element_text(face = "bold", size = 16),
+    plot.subtitle = element_text(size = 14)
+  ) +
+  
+  labs(
+    title = "Liverpool – 2015-16 Season",
+    subtitle = paste0("Expected Goals: ", round(sum(liverpool_shots$xg), 2),
+                      " (", sum(liverpool_shots$is_goal),
+                      " goals / ", nrow(liverpool_shots), " shots)"),
+    caption = "Circle size = xG value | Black outline = Goal"
+  )
+
+ggsave("liverpool_shotmap.png", p_liv, width = 4, height = 6, dpi = 300)
+
+# Leicester City
+
+p_lei <- ggplot(leicester_shots, aes(x = y, y = x)) +
+  
+  annotate("rect", xmin = 0, xmax = 80, ymin = 0, ymax = 120,
+           fill = "#F5F5F5", color = "#CCCCCC", linewidth = 0.8) +
+  
+  annotate("rect", xmin = 18, xmax = 62, ymin = 102, ymax = 120,
+           fill = NA, color = "#CCCCCC", linewidth = 0.8) +
+  
+  annotate("rect", xmin = 30, xmax = 50, ymin = 114, ymax = 120,
+           fill = NA, color = "#CCCCCC", linewidth = 0.8) +
+  
+  annotate("segment", x = 36, xend = 44, y = 120, yend = 120,
+           color = "#333333", linewidth = 2) +
+  
+  annotate("path",
+           x = 40 + 10 * sin(seq(0.64, 2.5, length.out = 50)),
+           y = 108 + 10 * cos(seq(0.64, 2.5, length.out = 50)),
+           color = "#CCCCCC", linewidth = 0.8) +
+  
+  geom_point(data = filter(leicester_shots, is_goal == 0),
+             aes(size = xg, fill = xg),
+             color = "#666666",
+             shape = 21,
+             stroke = 1,
+             alpha = 0.85) +
+  
+  geom_point(data = filter(leicester_shots, is_goal == 1),
+             aes(size = xg, fill = xg),
+             color = "#000000",
+             shape = 21,
+             stroke = 1,
+             alpha = 1) +
+  
+  scale_size_continuous(range = c(1, 5), guide = "none") +
+  scale_fill_gradientn(colors = xg_colors,
+                       limits = c(0, 1),
+                       breaks = c(0.1, 0.2, 0.4, 0.6, 0.8),
+                       labels = c("low", "", "", "", "high"),
+                       name = "Goal probability") +
+  
+  coord_fixed(xlim = c(0, 80), ylim = c(60, 121)) +
+  
+  theme_minimal() +
+  theme(
+    panel.grid = element_blank(),
+    axis.text = element_blank(),
+    axis.title = element_blank(),
+    legend.position = "bottom",
+    plot.title = element_text(face = "bold", size = 16),
+    plot.subtitle = element_text(size = 14)
+  ) +
+  
+  labs(
+    title = "Leicester City – 2015-16 Season",
+    subtitle = paste0("Expected Goals: ", round(sum(leicester_shots$xg), 2),
+                      " (", sum(leicester_shots$is_goal),
+                      " goals / ", nrow(leicester_shots), " shots)"),
+    caption = "Circle size = xG value | Black outline = Goal"
+  )
+
+#ggsave("leicester_shotmap.png", p_lei, width = 4, height = 6, dpi = 300)
+
+#knitr::include_graphics("liverpool_shotmap.png")
+#knitr::include_graphics("leicester_shotmap.png")
+
+
+```
