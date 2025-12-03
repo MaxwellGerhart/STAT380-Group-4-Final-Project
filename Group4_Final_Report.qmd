@@ -6,6 +6,7 @@ format: pdf
 keep-md: true
 embed-resources: true
 editor: visual
+geometry: "margin=0.5in"
 ---
 
 ```{r}
@@ -22,6 +23,8 @@ library(ggplot2)
 library(webshot2)
 
 ```
+
+\newpage
 
 Our goal for the project was to create a model to calculate the probability of a shot resulting in a goal. In soccer this metric is commonly known as expected goals (xG for short). We plan on creating three models: a logistic regression model, Generalized Additive Model (GAM), and random forest model. Once we select the best model, we will put this model to use by calculating the expected points of an entire league season. Calculating expected points requires running simulations based on the shot xG values in order to calculate the proportion of wins, losses, and draws for each team. 
 
@@ -63,14 +66,14 @@ seriea1516 <- comps %>%
   filter(competition_id == "12", season_id == "27")
 
 
-# Fetch matches for each competition
+# get matches for each competition
 prem1516_matches <- FreeMatches(prem1516)
 laliga1516_matches <- FreeMatches(laliga1516)
 bundes1516_matches <- FreeMatches(bundes1516)
 ligue1516_matches <- FreeMatches(ligue1516)
 seriea1516_matches <- FreeMatches(seriea1516)
 
-# Combine all matches into one data frame, except premier league
+# combine data
 matches_1516 <- bind_rows(
   laliga1516_matches,
   bundes1516_matches,
@@ -78,10 +81,10 @@ matches_1516 <- bind_rows(
   seriea1516_matches,
 )
 
-# Get all events from matches data frame
+# get all events
 events <- free_allevents(MatchesDF = matches_1516, Parallel = TRUE)
 
-# Filter Shots
+# filter Shots
 shots <- events %>%
   filter(type.name == "Shot") %>%
   mutate(
@@ -102,7 +105,7 @@ shots <- events %>%
     under_pressure = ifelse(is.na(under_pressure), 0, 1)
   )
 
-# Creating Distance + Angle
+# creating distance + angle
 goal_x <- 120
 goal_y <- 40
 
@@ -118,6 +121,8 @@ shots <- shots %>%
 #| warning: false
 #| message: false
 #| echo: false
+#| fig.align: center
+
 
 cols <- ifelse(shots$is_goal == 1, "green", "red")
 
@@ -264,7 +269,7 @@ library(dplyr)
 library(gt)
 library(StatsBombR)
 
-## 1. Get Premier League 2015–16 events ----
+#
 comps <- FreeCompetitions()
 prem1516_matches <- FreeMatches(prem1516)
 prem_events <- free_allevents(
@@ -341,7 +346,7 @@ simulate_match_from_xg <- function(match_shots, n_sims = 10000) {
   prob_mat <- matrix(rep(xg, each = n_sims),
                      nrow = n_sims, ncol = n_shots, byrow = FALSE)
   
-  # simulate goals per shot (Bernoulli)
+  # simulate goals per shot
   goal_mat <- matrix(
     rbinom(n_sims * n_shots, size = 1, prob = as.vector(prob_mat)),
     nrow = n_sims, ncol = n_shots
@@ -372,8 +377,7 @@ simulate_match_from_xg <- function(match_shots, n_sims = 10000) {
   )
 }
 
-## 4. Expected points per match and per season ----
-# per match (two rows per match: one per team)
+# expected points sim
 set.seed(380)
 
 match_expected_points <- prem_shots %>%
@@ -393,7 +397,7 @@ season_expected_points <- match_expected_points %>%
     .groups = "drop"
   )
 
-## 5. Calculate xG and xGA ----
+# calculate xG and xGA totals
 xg_summary <- prem_shots %>%
   group_by(team.name) %>%
   summarise(
@@ -420,9 +424,8 @@ xga_summary <- prem_shots %>%
   ) %>%
   rename(team.name = opponent)
 
-## 6. Get actual results ----
+# get actual results
 actual_results <- prem1516_matches %>%
-  # Home team results
   transmute(
     team.name = home_team.home_team_name,
     W = if_else(home_score > away_score, 1, 0),
@@ -437,7 +440,6 @@ actual_results <- prem1516_matches %>%
     )
   ) %>%
   bind_rows(
-    # Away team results
     prem1516_matches %>%
       transmute(
         team.name = away_team.away_team_name,
@@ -464,7 +466,7 @@ actual_results <- prem1516_matches %>%
     .groups = "drop"
   )
 
-## 7. Combine everything into final table ----
+# create final table
 final_table <- actual_results %>%
   left_join(xg_summary, by = "team.name") %>%
   left_join(xga_summary, by = "team.name") %>%
@@ -473,10 +475,11 @@ final_table <- actual_results %>%
   arrange(desc(PTS)) %>%
   select(team.name, W, D, L, GF, GA, PTS, xG, xGA, xPTS)
 
-## 8. Create beautiful table ----
+# format table
 gt_tbl <- final_table %>%
   mutate(
     Rank = row_number(),
+    xPOS = rank(-xPTS, ties.method = "min"),  # Calculate position based on xPTS
     .before = team.name
   ) %>%
   gt() %>%
@@ -495,7 +498,8 @@ gt_tbl <- final_table %>%
     PTS = "PTS",
     xG = "xG",
     xGA = "xGA",
-    xPTS = "xPTS"
+    xPTS = "xPTS",
+    xPOS = "xPOS"
   ) %>%
   fmt_number(
     columns = c(xG, xGA, xPTS),
@@ -520,11 +524,15 @@ gt_tbl <- final_table %>%
   ) %>%
   cols_align(
     align = "center",
-    columns = c(W, D, L, GF, GA, PTS, xG, xGA, xPTS)
+    columns = c(W, D, L, GF, GA, PTS, xG, xGA, xPTS, xPOS)
   ) %>%
   cols_align(
     align = "left",
     columns = team.name
+  ) %>%
+  cols_move(
+    columns = xPOS,
+    after = xPTS
   )
 
 gtsave(gt_tbl, "prem_table.png")
@@ -743,7 +751,13 @@ The sport is moving toward more accurate, personalized, and data-driven evaluati
 
 Future work could explore these concerns by studying how analytics changes playing styles over time, whether teams become more similar tactically, and how data use affects creativity, risk-taking, and overall entertainment value. Understanding this balance will be important as soccer continues to evolve with more data and technology.
 
+\newpage
+
 **Author Contribution**
+
+Maxwell Gerhart, Rohan Sampath, Jaikhush Thakkar, and Ryan Kaye discussed and planned the research project. Rohan Sampath and Ryan Kaye designed the models and performed model assessment. Maxwell Gerhart and Jaikhush Thakkar compiled the league table and analyzed the results as well as the shot map visualizations. All authors provided critical feedback and helped shape the report.
+
+\newpage
 
 **Code Appendix**
 
